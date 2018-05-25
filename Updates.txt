@@ -1,0 +1,8 @@
+This disc contains update RPMs from RedHat for the set of packages that will
+be normally installed in the lab environment.  To re-make the TGZ to include
+newer/different packages, follow these steps.
+
+1) Set up a clean RHEL v7 VM
+2) Run 'postinstall.sh --noupdates --noconfig'
+3) Install any other packages for which you may want updates
+4) 
