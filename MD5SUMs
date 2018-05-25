@@ -1,0 +1,16 @@
+8db60fc546cb4832513e7054022eba0a *.fsflag.Aa-Bb-Cc_Dd_Ee_Ff.1.2.3.4.5.6.7.9.10.11.12.13.14.15.16.17.18.19.20.21.22.23.24.25.txt
+0d21a43fa19692af388f33ca55615cbf *postinstall.sh
+f392e5fed92198249dab4b786158599d *.phase2.sh
+fbf81d8293bcbf5e5d704e8b2b75f2a2 *.phase3.sh
+be1b0f15b515d703312b19682996db21 *breakme
+52ed49a6ed0ee59606aaee64ec33bb04 *.scrape_dhcp_settings.sh
+39a83a02eaae5f16dde38a8fd7d0c5ba *iso_tail/centos72
+d938b5ef9a0e0f801cfc3f48de72329e *ftppub/ASCII_Art.tgz
+86db2aa170c80c5042e140c2af3e5554 *ftppub/extras.zip
+cea730d1c94e919f1dab474606023032 *ftppub/install_trouble-maker-0.11.sh
+3e6844b271fdc5bbfbaf2272cedf2108 *ftppub/centos7.3_partial_20170111.tgz
+9bcc312bd30ddd19177e53b5edfef1e1 *ftppub/station_ks_1_1_12.cfg
+370c21913c7f21bd9900bb91563feeaf *ftppub/VMwareTools-10.0.5-3227872.tar.gz
+9f30ce358869310162ae750ba86b3534 *ftppub/materials/sl-5.02-1.el7.x86_64.rpm
+6d0a5003808e825853c099f66a65d088 *ftppub/materials/test.sql
+4885ed99c180b33816ab1be3a0e937dd *ftppub/materials/permissions.sh
