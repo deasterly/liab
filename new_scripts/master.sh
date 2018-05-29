@@ -1,4 +1,1277 @@
+
 #!/bin/bash
+
+### SET UP INITIAL VARIABLES ###
+
+LIABVERSION="1.2.0"
+LIABRELEASE="2018-05-29"
+
+# Banner lines
+BL1="[====/ Linux In A Box Setup Script, version $LIABVERSION"
+BL2="   //  $LIABRELEASE for CentOS 7.x x86_64"
+BL3="  //"
+BL4=" //"
+KICKSTARTRELEASE="LIAB server v$LIABVERSION"
+
+# Absolute path to the 'pub' directory for the FTP server
+FTPDIR=/var/ftp/pub
+
+showBanner(){
+echo ""
+echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}"
+echo ""
+}
+showBanner
+
+
+# Daniel_Johnson1@dell.com      Aaron_Southerland@dell.com
+# This script was made to automate the initial setup of the Red Hat In
+# A Box lab server.  With RHEL7 we cannot use floppy-based kickstart scripts,
+# and changes to how network devices are enumerated creates a challenge
+# that I do not believe can be solved before or during installation in any
+# supportable, reliable way.
+#
+# Thus this PostInstall script, which used to just handle a few things
+# too large for kickstarting, will have to do *everything*.  The user is
+# expected to have created a VM using the default settings in the RHEL 7.2
+# ISO, assigned a root password (we suggest "password"), and either
+# skipped creating a normal user or created one with a name that won't
+# cause any conflicts later.  Basically just take defaults and stay out of
+# our way.  :)
+#
+
+
+am_I_sourced () {
+  # From  http://stackoverflow.com/a/12396228
+  if [ "${FUNCNAME[1]}" = source ]; then
+    #echo "I am being sourced, this filename is ${BASH_SOURCE[0]} and my caller script/shell name was $0"
+    return 0
+  else
+    #echo "I am not being sourced, my script/shell name was $0"
+    return 1
+  fi
+}
+
+check4Source(){
+# Lazyness - If we are being sourced, I need to remove all the 'exit's and substitute
+# something that won't log you out.  But I'd rather not spend time on that right now, so...
+if am_I_sourced ; then
+  echo "ERROR: This script must be called directly rather than being 'sourced'."
+  # See, can't use 'exit' here
+  return 0
+fi
+}
+
+mustBeRoot(){
+[ 0 -ne $UID ] && echo "ERROR: This MUST be run as root!  Try again." && exit 1
+}
+
+
+
+mustUseAbsolutePath(){
+if am_I_sourced ; then
+  MPOINT=`dirname ${BASH_SOURCE[0]}`
+else
+  MPOINT=`dirname $0`
+fi
+
+[ "/" != "${MPOINT:0:1}" ] && echo "ERROR: You must call this script using an absolute path, not a relative path." && echo "       Example:  /mnt/postinstall.sh" && exit 1
+}
+
+dontRunFromPWD(){
+# I'm not sure that this would be a problem I can't bypass but why take chances?
+pwd | grep -q "^${MPOINT}" && echo "ERROR: You must NOT call this script from the mount point directory itself." && echo "       Use something like    cd /root; ${0}" && exit 1
+}
+
+checkForISO9660(){
+# "What on earth is this?"  We had an issue when someone specified iso9660 as the mounting filesystem type.
+# It messed with the length and case-sensitivity of filenames.  If this long nasty name survives, the others will too.
+[ ! -f ${MPOINT}/.fsflag.Aa-Bb-Cc_Dd_Ee_Ff.1.2.3.4.5.6.7.9.10.11.12.13.14.15.16.17.18.19.20.21.22.23.24.25.txt ] && echo "ERROR: ISO mounted with the WRONG filesystem, names are corrupt." && echo "       Re-mount without specifying a filesystem type." && exit 1
+}
+
+
+getConfigOptions(){
+### ### ###
+### Need to examine these as the basis for a "y/n" menu driven deployment script...
+
+CDDEVICE=`mount | grep "$MPOINT" | head -n 1 | cut -d " " -f 1`
+VERIFYCHECKSUM=1
+APPLYUPDATES=1
+INSTALLRPMS=1
+	# 2015-04-27  VMware Tools isn't _really_ needed, and I'm running into some
+	# problems with it making scripts hang.  For now, skipping it.
+INSTALLVMTOOLS=0
+DONORMALCONFIG=1
+DOLDAPCONFIG=1
+DOKERBEROSCONFIG=1
+SKIPOSCHECK=0
+# Number of workstations to prepare for.  This MUST NOT BE LESS THAN 11 and
+# has not been tested higher than 50.
+NUMOFWS=11
+for i in "$@"; do
+  case $i in
+	--help|-h)
+	  echo ""
+	  echo "In general, run this script with no arguments on a freshly-installed"
+	  echo "CentOS v7.2 VM to set up a Lab Server that can deploy Lab Workstations."
+	  echo ""
+	  echo "The command arguments listed below are for use only by ADVANCED users"
+	  echo "and those who enjoy messing things up for no good reason.  If you use"
+	  echo "one of these and things break, it is YOUR fault and you should just"
+	  echo "rebuild the VM from scratch."
+	  echo ""
+	  echo "  --nochecksum		 Do not stop if MD5 checksum fails"
+	  echo "  --noupdate		 Do not attempt to apply updated RPMs via 'yum'"
+	  echo "  --noinstall		 Do not install any RPMs via 'yum'"
+	  echo "  --novmtools		 Do not attempt to install VMware Tools"
+	  echo "  --noconfig		 Do not run the configuration steps in 'phase3.sh'"
+	  echo "  --noldapconfig	 Do not run the LDAP configuration steps in 'phase3.sh'"
+	  echo "  --nokerberosconfig Do not run the Kerberos configuration steps in 'phase3.sh'"
+	  # Looks wrong but lines up on the screen
+	  echo "  --forcerh		 Do not check distribution or version of Linux"
+	  echo ""
+	  exit 0
+	  ;;
+    --nochecksum)
+	  VERIFYCHECKSUM=0
+	  ;;
+    --noupdate)
+	  APPLYUPDATES=0
+	  ;;
+	--noinstall)
+	  INSTALLRPMS=0
+	  ;;
+	--novmtools)
+	  INSTALLVMTOOLS=0
+	  ;;
+	--noconfig)
+	  DONORMALCONFIG=0
+	  DOLDAPCONFIG=0
+	  DOKERBEROSCONFIG=0
+	  ;;
+	  ############
+	  # The LDAP and Kerberos flags are intended for script development, so we
+	  # can more easily determine what commands are truly needed.
+	--noldapconfig)
+	  # At this time, the LDAP certificate creation is not skipped by this.
+	  DOLDAPCONFIG=0
+	  ;;
+	--nokerberosconfig)
+	  DOKERBEROSCONFIG=0
+	  ;;
+	  ############
+	--forcerh)
+	  SKIPOSCHECK=1
+	  ;;
+	*)
+	  # Unrecognized
+	  ;;
+  esac
+done
+}
+### ### ### 
+
+detectCentOS(){
+DETECTEDOS=99
+
+# 10=CentOS v7.0
+# 11=CentOS v7.1
+# 12=CentOS v7.2
+# 99=Unknown
+# Note that we will ONLY set the value to something other than '99'
+# if we are *OK* with that version being used.
+grep -q "^CentOS Linux release 7.0.1406 (Core)" /etc/redhat-release && DETECTEDOS=10
+grep -q "^CentOS Linux release 7.1.1503 (Core)" /etc/redhat-release && DETECTEDOS=11
+grep -q "^CentOS Linux release 7.2.1511 (Core)" /etc/redhat-release && DETECTEDOS=12
+[ ! -f /etc/redhat-release ] && DETECTEDOS=99
+if [ 2 -eq ${DETECTEDOS} ] || [ 12 -eq ${DETECTEDOS} ] ; then
+  # We got CentOS v7.2
+  true
+else
+  echo "ERROR: This is intended to be run only on CentOS 7.2.  It should"
+  echo "       not be used on any other distribution or version."
+  if [ 1 -eq ${SKIPOSCHECK} ]; then
+    echo "DANGER: Proceeding anyway due to command argument.  This is dumb.  If this"
+	echo "        spoils the milk in your fridge or kills your pet, it's YOUR FAULT."
+	sleep 5
+  else
+    exit 1
+  fi
+fi
+}
+
+
+verifyMD5SUMS(){
+pushd ${MPOINT} &>/dev/null
+[ ! -f MD5SUMs ] && echo "ERROR: MD5SUMs file is missing!"
+if ! md5sum -c MD5SUMs --quiet 2>/dev/null ; then
+  echo "ERROR: One or more files failed MD5 checksum comparison.  Please verify the"
+  echo "       ISO and re-download if it is corrupt.  If the file is not corrupt,"
+  echo "       this is probably a development problem."
+  if [ 0 -eq ${VERIFYCHECKSUM} ]; then
+    echo "DANGER: Proceeding anyway due to command argument.  This is dumb.  If this"
+	echo "        spoils the milk in your fridge or kills your pet, it's YOUR FAULT."
+	sleep 5
+  else
+    exit 1
+  fi
+fi
+popd &>/dev/null
+}
+
+##################################################################
+### Get DNS Forwarder Info from DHCP
+### This may get easier w/ newer NetworkManager versions
+##################################################################
+
+# Daniel_Johnson1@dell.com
+
+# Pick out DNS and NTP settings from our DHCP lease so we can
+# use the most optimal values instead of trying to guess.
+
+getExternalDHCPInfo(){
+# Interface we care about, based on knowing our connection name from Phase1
+INTERFACE=`nmcli -t -f DEVICE,CONNECTION device | grep ":External$" | cut -f 1 -d ":"`
+
+# What's the most recent lease file?
+CURLEASE=`ls -1tr /var/lib/NetworkManager/dhclient*-${INTERFACE}.lease | tail -n 1`
+
+[ ! -f "${CURLEASE}" ] && echo "No DHCP lease file for interface ${INTERFACE}, aborting!" && logger "scrape_dhcp_settings: No DHCP lease file" && exit 1
+}
+
+getDNSServerInfo(){
+DNS1=`grep "option domain-name-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 1`
+DNS2=`grep "option domain-name-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 2`
+DNS3=`grep "option domain-name-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 3`
+
+# The sed bit removes quotation marks and commas from the string
+DNSSEARCH=`grep "option domain-search" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5- | cut -d ";" -f 1 | sed 's/"//g;s/,//g'`
+# If only one value was given, we end up with duplicates.
+[ "${DNS3}" == "${DNS2}" ] && DNS3=""
+[ "${DNS2}" == "${DNS1}" ] && DNS2=""
+}
+
+getNTPServerInfo(){
+NTP1=`grep "option ntp-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 1`
+NTP2=`grep "option ntp-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 2`
+NTP3=`grep "option ntp-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cut -d ";" -f 1 | cut -d "," -f 3`
+# If only one value was given, we end up with duplicates.
+[ "${NTP3}" == "${NTP2}" ] && NTP3=""
+[ "${NTP2}" == "${NTP1}" ] && NTP2=""
+}
+##############################################################################
+
+
+configureForwarder(){
+rm /etc/named.forwarders.new &>/dev/null
+echo "# Referenced from /etc/named.conf .  These are the external DNS servers" >> /etc/named.forwarders.new
+echo "# we query when we don't have the answer.  They are set by scrape_dhcp_settings.sh ." >> /etc/named.forwarders.new
+echo "forwarders {" >> /etc/named.forwarders.new
+VALIDDNS=0
+[ ! -z "${DNS1}" ] && echo "  ${DNS1};" >> /etc/named.forwarders.new && let VALIDDNS++
+[ ! -z "${DNS2}" ] && echo "  ${DNS2};" >> /etc/named.forwarders.new && let VALIDDNS++
+[ ! -z "${DNS3}" ] && echo "  ${DNS3};" >> /etc/named.forwarders.new && let VALIDDNS++
+echo "};" >> /etc/named.forwarders.new
+echo "" >> /etc/named.forwarders.new
+# If this is the same config we had, pretend we didn't get any values
+diff /etc/named.forwarders.new /etc/named.forwarders &>/dev/null && VALIDDNS=0
+# Only overwrite the last file if we have something useful
+[ ${VALIDDNS} -gt 0 ] && chattr -i /etc/named.forwarders && mv /etc/named.forwarders.new /etc/named.forwarders && systemctl restart named.service
+rm /etc/named.forwarders.new &>/dev/null
+}
+
+##############################################################################
+
+configureResolver(){
+rm /etc/resolv.conf.new &>/dev/null
+VALIDRESOLV=1
+echo "# Set by a script and file marked immutable to prevent changes by anything else" >> /etc/resolv.conf.new
+# Always put our local zone first, of course.  With a trailing space!
+echo -n "search example.com. " >> /etc/resolv.conf.new
+# By default only the first SIX search domains are used.  They must be space-separated.
+if [ -z "${DNSSEARCH}" ]; then
+  # DHCP didn't provide any DNS search information, using a default set.
+  #echo "eerclab.dell.com. okc.amer.dell.com. amer.dell.com. us.dell.com." >> /etc/resolv.conf.new
+  # On the other hand, no point in guessing right now.  Let's just terminate
+  # that hanging 'echo -n'.
+  echo " " >> /etc/resolv.conf.new
+else
+  # DHCP provided a list of DNS zones we should search when given an unqualified name
+  echo "${DNSSEARCH}" >> /etc/resolv.conf.new
+fi
+if [ "$1" == "phase1_temp" ]; then
+  echo "# TEMPORARILY using the DHCP-provided DNS servers directly." >> /etc/resolv.conf.new
+  echo "# Once our own DNS daemon is running this will be changed." >> /etc/resolv.conf.new
+  if [ "$VALIDDNS" -gt 0 ]; then
+    [ ! -z "${DNS1}" ] && echo "nameserver ${DNS1}" >> /etc/resolv.conf.new
+    [ ! -z "${DNS2}" ] && echo "nameserver ${DNS2}" >> /etc/resolv.conf.new
+    [ ! -z "${DNS3}" ] && echo "nameserver ${DNS3}" >> /etc/resolv.conf.new
+  else
+    echo "# Or not...  We didn't GET any valid DNS servers from DHCP!" >> /etc/resolv.conf.new
+    echo "nameserver 127.0.0.1" >> /etc/resolv.conf.new
+  fi
+else
+  echo "# Since we host our own DNS zone, we cannot use external resolvers" >> /etc/resolv.conf.new
+  echo "# here.  They are configured as Forwarders in /etc/named.forwarders ." >> /etc/resolv.conf.new
+  echo "nameserver 127.0.0.1" >> /etc/resolv.conf.new
+fi
+# If this is the same config we had, pretend we didn't get any values
+diff /etc/resolv.conf.new /etc/resolv.conf &>/dev/null && VALIDRESOLV=0
+# Only overwrite the last file if we have something useful
+[ ${VALIDRESOLV} -gt 0 ] && chattr -i /etc/resolv.conf && mv /etc/resolv.conf.new /etc/resolv.conf && chattr +i /etc/resolv.conf
+rm /etc/resolv.conf.new &>/dev/null
+}
+
+
+##############################################################################
+##############################################################################
+
+configureChrony(){
+rm /etc/chrony.conf.new &>/dev/null
+cp /etc/chrony.conf.base /etc/chrony.conf.new &>/dev/null
+VALIDNTP=0
+[ ! -z "${NTP1}" ] && echo "server ${NTP1} iburst" >> /etc/chrony.conf.new && let VALIDNTP++
+[ ! -z "${NTP2}" ] && echo "server ${NTP2} iburst" >> /etc/chrony.conf.new && let VALIDNTP++
+[ ! -z "${NTP3}" ] && echo "server ${NTP3} iburst" >> /etc/chrony.conf.new && let VALIDNTP++
+# If this is the same config we had, pretend we didn't get any values
+diff /etc/chrony.conf.new /etc/chrony.conf &>/dev/null && VALIDNTP=0
+# Only overwrite the last file if we have something useful
+[ ${VALIDNTP} -gt 0 ] && chattr -i /etc/chrony.conf && mv /etc/chrony.conf.new /etc/chrony.conf && chattr +i /etc/chrony.conf && systemctl restart chronyd.service
+rm /etc/chrony.conf.new &>/dev/null
+}
+
+logResults(){
+logger "scrape_dhcp_settings: DNS values ${DNS1} ${DNS2} ${DNS3}; NTP values ${NTP1} ${NTP2} ${NTP3}; DNSSEARCH ${DNSSEARCH}"
+}
+
+
+
+
+##################################################################
+##################################################################
+
+### Need to understand this part better...
+doWeirdStuff1(){
+[ -d ${FTPDIR}/ ] || mkdir -p ${FTPDIR}/
+
+`echo "bG9nZ2VyIFRoaXMgd2FzIGEgdHJpdW1waC4K" | base64 -d`
+echo "Passed sanity checks, copying small files and setting up links."
+
+# PostInstall Temp Dir
+PITD=`mktemp -d`
+LOG="${PITD}/phase1.log"
+( echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}" ) >>"${LOG}"
+echo "${KICKSTARTRELEASE}" > /etc/kickstart-release
+
+cp -af ${MPOINT}/ftppub/* ${FTPDIR}/
+cp -f ${MPOINT}/breakme /usr/local/sbin/
+cp -f ${MPOINT}/.scrape_dhcp_settings.sh /usr/local/sbin/scrape_dhcp_settings.sh
+chmod 555 /usr/local/sbin/breakme
+chmod 555 /usr/local/sbin/scrape_dhcp_settings.sh
+
+# Rather than renaming those files, let's just make symlinks.  This
+# helps preserve their version information in plain sight.  The sorting
+# from "ls" is sufficient until we go from (for instance) single to double
+# digits, so "sort -V" is used to keep things sane.
+pushd ${FTPDIR} &>/dev/null
+rm -f VMwareTools.tar.gz station_ks.cfg &>/dev/null
+ln -s $(ls VMwareTools-*.tar.gz | sort -V | tail -n 1) VMwareTools.tar.gz | tee -a "${LOG}"
+ln -s $(ls station_ks_*.cfg | sort -V | tail -n 1) station_ks.cfg | tee -a "${LOG}"
+popd &>/dev/null
+
+restorecon -R ${FTPDIR}
+}
+
+
+############################################################
+# General network setup
+############################################################
+
+getNICInfo(){
+nmcli -t -f DEVICE,TYPE,CONNECTION,CON-UUID device | grep "ethernet" > ${PITD}/NICs
+NUM_OF_NICS=`wc -l < ${PITD}/NICs`
+# Ensure value is numeric
+let NUM_OF_NICS+=0
+if [ 2 -gt ${NUM_OF_NICS} ]; then
+  echo "ERROR: There are not enough Ethernet NICs available.  Ensure you have 2 and" | tee -a "${LOG}"
+  echo "       try again." | tee -a "${LOG}"
+  exit 1
+fi
+if [ 2 -lt ${NUM_OF_NICS} ]; then
+  echo "I only need two Ethernet NICs, but you have ${NUM_OF_NICS}.  That's OK," | tee -a "${LOG}"
+  echo "I'll just use the first two.  You can do what you want with the rest." | tee -a "${LOG}"
+fi
+}
+
+getNICOrder(){
+# So what's the magical way we decide which NIC is #1 vs #2?
+# We just take whatever order is output from 'nmcli'.  Yes, lame.
+NIC1NAME=`head -n 1 < ${PITD}/NICs | cut -d ":" -f 1`
+NIC1CON=`head -n 1 < ${PITD}/NICs | cut -d ":" -f 3`
+NIC1CONUUID=`head -n 1 < ${PITD}/NICs | cut -d ":" -f 4`
+NIC2NAME=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 1`
+NIC2CON=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 3`
+NIC2CONUUID=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 4`
+}
+
+
+doWeirdNICVoodoo(){
+### This seems arbitrarily convoluted to me, perhaps due to 
+### the original design's reliance on VMWare, so this might
+### be simplified...
+
+# I find it interesting that the network setup steps don't take a
+# predictable amount of time to run.  It seems to vary considerably.
+
+# Only clear/re-create the settings for NIC1 if it does NOT have a
+# connection called "External"
+if [ "${NIC1CON}" != "External" ]; then
+  echo "nmcli device disconnect ${NIC1NAME}" &>>"${LOG}"
+  nmcli device disconnect ${NIC1NAME} &>>"${LOG}"
+  if [ "${NIC1CONUUID}" != "--" ]; then
+    # If the connection name/UUID is '--' then it was blank/not set.
+	echo "nmcli connection delete uuid ${NIC1CONUUID}" &>>"${LOG}"
+    nmcli connection delete uuid ${NIC1CONUUID} &>>"${LOG}"
+  fi
+  # "DHCP" is implied when you don't specify an IP address.  In fact I see no way
+  # to explicitly state DHCP as an option...?
+  echo "nmcli connection delete id ${NIC1NAME}" &>>"${LOG}"
+  nmcli connection delete id ${NIC1NAME} &>>"${LOG}"
+  echo "nmcli connection add type ethernet con-name External ifname ${NIC1NAME}" &>>"${LOG}"
+  nmcli connection add type ethernet con-name External ifname ${NIC1NAME} &>>"${LOG}"
+  echo "nmcli connection modify External connection.zone \"external\" ipv4.ignore-auto-dns \"true\" ipv4.dns \"127.0.0.1\" ipv4.dns-search \"example.com\"" &>>"${LOG}"
+  nmcli connection modify External connection.zone "external" ipv4.ignore-auto-dns "true" ipv4.dns "127.0.0.1" ipv4.dns-search "example.com" &>>"${LOG}"
+  # To ensure that our just-modified settings for DNS are used, briefly re-drop the connection
+  echo "nmcli device disconnect ${NIC1NAME}" &>>"${LOG}"
+  nmcli device disconnect ${NIC1NAME} &>>"${LOG}"
+  sleep 2
+  echo "nmcli device connect ${NIC1NAME}" &>>"${LOG}"
+  nmcli device connect ${NIC1NAME} &>>"${LOG}"
+  # And give it time to find an address.
+  sleep 2
+  echo "NIC1 (${NIC1NAME}) configured for DHCP operation.  Current address (if any):" | tee -a "${LOG}"
+else
+  echo "The first NIC (${NIC1NAME}) looks like it was already configured.  To" | tee -a "${LOG}"
+  echo "avoid changing anything that you've customized, I'll leave it alone." | tee -a "${LOG}"
+  echo "Current address (if any):" | tee -a "${LOG}"
+fi
+ip address show ${NIC1NAME} | grep "inet" | cut -d " " -f 1-6 | tee -a "${LOG}"
+
+# IPv4 - Internal is 172.26.0.0/24
+# IPv6 - Internal is FD07:DE11:2015:0324::/64
+#        Anything in the FD::/8 (actually FC::/7) is OK.
+#        I just made this up with today's date.
+
+# Always clear/re-create the settings for NIC2
+echo "nmcli device disconnect ${NIC2NAME}" &>>"${LOG}"
+nmcli device disconnect ${NIC2NAME} &>>"${LOG}"
+if [ "${NIC2CONUUID}" != "--" ]; then
+  # If the connection name/UUID is '--' then it was blank/not set.
+  echo "nmcli connection delete uuid ${NIC2CONUUID}" &>>"${LOG}"
+  nmcli connection delete uuid ${NIC2CONUUID} &>>"${LOG}"
+fi
+echo "nmcli connection delete id ${NIC2NAME}" &>>"${LOG}"
+nmcli connection delete id ${NIC2NAME} &>>"${LOG}"
+echo "nmcli connection delete id Internal" &>>"${LOG}"
+nmcli connection delete id Internal &>>"${LOG}"
+echo "nmcli connection add type ethernet con-name Internal ifname ${NIC2NAME} ip4 172.26.0.1/24 ip6 fd07:de11:2015:0324::1/64" &>>"${LOG}"
+nmcli connection add type ethernet con-name Internal ifname ${NIC2NAME} ip4 172.26.0.1/24 ip6 fd07:de11:2015:0324::1/64 &>>"${LOG}"
+# Repeating the DNS information so that NetworkManager will be certain to use
+# the proper values even if the External connection is down for some reason.
+echo "nmcli connection modify Internal connection.zone \"internal\" ipv4.dns \"127.0.0.1\" ipv4.dns-search \"example.com\"" &>>"${LOG}"
+nmcli connection modify Internal connection.zone "internal" ipv4.dns "127.0.0.1" ipv4.dns-search "example.com" &>>"${LOG}"
+# For much the same reasons as above, we're going to briefly drop this connection also.
+echo "nmcli device disconnect ${NIC2NAME}" &>>"${LOG}"
+nmcli device disconnect ${NIC2NAME} &>>"${LOG}"
+sleep 2
+echo "nmcli device connect ${NIC2NAME}" &>>"${LOG}"
+nmcli device connect ${NIC2NAME} &>>"${LOG}"
+sleep 2
+echo "NIC2 (${NIC2NAME}) configured with static addresses"  | tee -a "${LOG}"
+#echo "              172.26.0.1 and fd07:de11:2015:0324::1." | tee -a "${LOG}"
+# Oh let's go ahead and read it live, eh?
+ip address show ${NIC2NAME} | grep "inet" | cut -d " " -f 1-6 | tee -a "${LOG}"
+echo ""  | tee -a "${LOG}"
+# And a full dump for the debug log
+ip address show  &>>"${PITD}/ip_a_s.txt"
+nmcli connection &>>"${PITD}/nmcli_con.txt"
+nmcli device &>>"${PITD}/nmcli_dev.txt"
+ethtool ${NIC1NAME} &>>"${PITD}/ethtool_1.txt"
+ethtool ${NIC2NAME} &>>"${PITD}/ethtool_2.txt"
+
+# Use our DHCP-assigned DNS and NTP settings in a way more appropriate than
+# what NetworkManager would normally do.  We'll be doing a better job after
+# our local DNS server is running, so for now use a special flag.
+/usr/local/sbin/scrape_dhcp_settings.sh phase1_temp &>/dev/null
+}
+
+doHostnameStuff(){
+############################################################
+# Hostname.  Note that the shell prompt won't be updated
+# until reboot or logoff/on.
+# Make a backup of the hosts file, *OR* revert to that backup.
+[ ! -f /etc/hosts_orig ] && cp -a /etc/hosts /etc/hosts_orig || cp -a /etc/hosts_orig /etc/hosts
+# Despite having DNS setup later, we need this for LDAP/Kerberos.
+echo "172.26.0.1  server1.example.com  server1" >> /etc/hosts
+echo "server1.example.com" > /etc/hostname
+hostname server1
+}
+
+doCentralTime(){
+# Timezone (defaults to Eastern/New York)
+( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
+}
+
+############################################################
+
+doWeirdStuff2(){
+# That's all we can do without extra packages.  Now we need to transfer
+# control out of the mount-point, unmount the PostInstall ISO, and
+# prompt the user to connect the full CentOS 7.2 ISO
+
+cp ${MPOINT}/.phase2.sh ${PITD}/phase2.sh
+cp ${MPOINT}/.phase3.sh ${PITD}/phase3.sh
+mkdir ${PITD}/iso_tail
+# Hmm, could just copy the file for the detected OS.
+cp ${MPOINT}/iso_tail/* ${PITD}/iso_tail/
+[ -f ${MPOINT}/rhel7_updates.tgz ] && cp ${MPOINT}/rhel7_updates.tgz ${PITD}
+
+chmod +x ${PITD}/phase2.sh
+chmod +x ${PITD}/phase3.sh
+
+cat <<EOF>${PITD}/phase1.vars
+# PITD		PostInstall Temp Dir
+PITD="${PITD}"
+# FTPDIR	The 'pub' subdirectory on the FTP server
+FTPDIR="${FTPDIR}"
+# MPOINT	Where the PostInstall ISO is/was mounted
+MPOINT="${MPOINT}"
+# CDDEVICE	What device we found the PostInstall ISO in
+CDDEVICE="${CDDEVICE}"
+# NIC1NAME  Name of the first configured Ethernet NIC
+NIC1NAME="${NIC1NAME}"
+# NIC2NAME  Name of the second configured Ethernet NIC
+NIC2NAME="${NIC2NAME}"
+# VERIFYCHECKSUM  Validate checksum of files from PostInstall ISO
+VERIFYCHECKSUM="${VERIFYCHECKSUM}"
+# INSTALLRPMS   Run normal RPM installation
+INSTALLRPMS="${INSTALLRPMS}"
+# APPLYUPDATES  Allow yum to apply updated packages
+APPLYUPDATES="${APPLYUPDATES}"
+# INSTALLVMTOOLS  Try to install VMware Tools
+INSTALLVMTOOLS="${INSTALLVMTOOLS}"
+# DONORMALCONFIG   Run phase3.sh's configuration steps
+DONORMALCONFIG="${DONORMALCONFIG}"
+# DOLDAPCONFIG   Run phase3.sh's configuration steps for LDAP
+DOLDAPCONFIG="${DOLDAPCONFIG}"
+# DOKERBEROSCONFIG   Run phase3.sh's configuration steps for Kerberos
+DOKERBEROSCONFIG="${DOKERBEROSCONFIG}"
+# SKIPOSCHECK   Don't fail for unsupported OS
+SKIPOSCHECK="${SKIPOSCHECK}"
+# DETECTEDOS   What OS did we find?
+DETECTEDOS="${DETECTEDOS}"
+# NUMOFWS   Number of workstations to prepare for (11<=x<=50)
+NUMOFWS="${NUMOFWS}"
+EOF
+
+# Just in case
+set &>>"${PITD}/phase1_debug_set"
+
+# Back to root's home directory.
+cd 
+}
+
+startPhase2(){
+# How we call phase2 depends on how we were originally called.
+# Since we were executed from the ISO mount point, the hand-off
+# to phase2.sh must be done in this careful way to allow bash
+# to release its lock on the device, otherwise we won't be able
+# to unmount and eject it.
+if am_I_sourced ; then
+  ${PITD}/phase2.sh ${PITD}/phase1.vars
+else
+  exec ${PITD}/phase2.sh ${PITD}/phase1.vars
+fi
+}
+
+##########################################################################
+### Initial setup complete
+### Service configuration prep
+##########################################################################
+
+sanityCheck1(){
+# Actually go pick up the variables from phase1 if they are not already set
+[ "" == "${PITD}" ] && . ${1}
+# From the first script we have inherited these values (all absolute paths)
+# PITD			PostInstall Temp Dir
+# FTPDIR		The 'pub' subdirectory on the FTP server
+# MPOINT		Where the PostInstall ISO is/was mounted
+# CDDEVICE		What device we found the PostInstall ISO in
+# NIC1NAME		Name of the first configured Ethernet NIC
+# NIC2NAME		Name of the second configured Ethernet NIC
+# DETECTEDOS	Distribution/version of Linux we are using
+
+[ "" == "${PITD}" ] && echo "DANGER: Error in collection of phase1 variables, contact developer/mentor." && exit 1
+LOG="${PITD}/phase2.log"
+
+umount -l ${MPOINT} &>>"${LOG}"
+umount -f ${MPOINT} &>>"${LOG}"
+eject ${CDDEVICE} &>>"${LOG}"
+if [ $? -ne 0 ]; then
+  echo "ERROR: Failed to unmount/eject the CD/DVD device.  Aborting." | tee -a "${LOG}"
+  exit 1
+fi
+echo "Phase one complete.  The PostInstall ISO has been unmounted." | tee -a "${LOG}"
+echo "=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-" | tee -a "${LOG}"
+}
+
+sanityCheck2(){
+# Manual sanity check for you, Mr. Maintainer:
+# If ISOSIZE is not a multiple of 2048 then something is wrong,
+# and the script may mis-compute some things when attempting
+# error recovery.
+
+# With just the basic CentOS 7.0 ISO available we should see 4,405 packages.
+# Including the HighAvailability and ResilientStorage repos brings 4,439.
+# I'm happy to have at least 4,405.
+
+# Always define at least one URL, even if it's not going to be reachable.
+# If a particular DNS name has a *single* static IP, consider adding the
+# url in IP-format under "ISOURLalt[x]".  This way if a DNS lookup fails
+# we can try again by IP.
+
+case ${DETECTEDOS} in
+  10) # CentOS v7.0
+    SHORTHUMANNAME="CentOS v7.0"
+    # Here 'DVD' is meant to differentiate between the ISO we want and the 8GB 'Everything' ISO
+    LONGHUMANNAME="CentOS Linux v7.0 DVD"
+    ISO=CentOS-7.0-1406-x86_64-DVD.iso
+    # Official public primary source
+    ISOURL[0]="http://vault.centos.org/7.0.1406/isos/x86_64/CentOS-7.0-1406-x86_64-DVD.iso"
+    ISOURLalt[0]="http://108.61.16.227/7.0.1406/isos/x86_64/CentOS-7.0-1406-x86_64-DVD.iso"
+	ISOURL[1]="http://archive.kernel.org/centos-vault/7.0.1406/isos/x86_64/CentOS-7.0-1406-x86_64-DVD.iso"
+    # OKC EERC.  Run by Daniel_Johnson1.
+    ISOURL[2]="http://dyson.okc.eerclab.dell.com/fs/Lab/OSISO/Linux/CentOS/7.0/CentOS-7.0-1406-x86_64-DVD.iso"
+    ISOURLalt[2]="http://10.14.176.76/fs/Lab/OSISO/Linux/CentOS/7.0/CentOS-7.0-1406-x86_64-DVD.iso"
+    # RR EERC.  Run by Keith_Wier.
+    ISOURL[3]="http://file1.eerc.local/SoftLib/ISOs/Linux/CentOS/7.0/CentOS-7.0-1406-x86_64-DVD.iso"
+    ISOURLalt[3]="http://10.180.48.120/SoftLib/ISOs/Linux/CentOS/7.0/CentOS-7.0-1406-x86_64-DVD.iso"
+    ISOSIZE=4148166656
+    ISOSHA256=ee505335bcd4943ffc7e6e6e55e5aaa8da09710b6ceecda82a5619342f1d24d9
+    ISO_HEAD_20MB_MD5=a49b6b79181160f7ab1fc2da2c5e5e96
+    # Mount point relative to the FTP root, used in some URLs
+    ISOMOUNTDIRREL="centos-7.0/dvd"
+    ISOMOUNTDIR="${FTPDIR}/${ISOMOUNTDIRREL}"
+    ISOMOUNTVERIFY="CentOS_BuildTag"
+    ISOTAIL=centos70
+    ISOMINPKGS=3538
+    YUMDISTRO_NAME="CentOS-7.0 x86_64"
+    # Caution, the 'short name' is used for path elements.  NO SPACES!
+    YUMSHORT_NAME="centos-7.0_x64"
+    YUMGPGPATH="file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7"
+    ;;
+  12) # CentOS v7.2
+    SHORTHUMANNAME="CentOS v7.2"
+    # Here 'DVD' is meant to differentiate between the ISO we want and the 8GB 'Everything' ISO
+    LONGHUMANNAME="CentOS Linux v7.2 DVD"
+    ISO=CentOS-7.2-1406-x86_64-DVD.iso
+    # Official public primary source
+    ISOURL[0]="http://vault.centos.org/7.2.1511/isos/x86_64/CentOS-7.2-1511-x86_64-DVD.iso"
+    ISOURLalt[0]="http://108.61.16.227/7.2.1511/isos/x86_64/CentOS-7.2-1511-x86_64-DVD.iso"
+	ISOURL[1]="http://archive.kernel.org/centos-vault/7.2.1511/isos/x86_64/CentOS-7.2-1511-x86_64-DVD.iso"
+    # OKC EERC.  Run by Daniel_Johnson1.
+    ISOURL[2]="http://dyson.okc.eerclab.dell.com/fs/Lab/OSISO/Linux/CentOS/7.2/CentOS-7.2-1511-x86_64-DVD.iso"
+    ISOURLalt[2]="http://10.14.176.76/fs/Lab/OSISO/Linux/CentOS/7.2/CentOS-7.2-1511-x86_64-DVD.iso"
+    # RR EERC.  Run by Keith_Wier.
+    ISOURL[3]="http://file1.eerc.local/SoftLib/ISOs/Linux/CentOS/7.2/CentOS-7.2-1511-x86_64-DVD.iso"
+    ISOURLalt[3]="http://10.180.48.120/SoftLib/ISOs/Linux/CentOS/7.2/CentOS-7.2-1511-x86_64-DVD.iso"
+	# Other public sources
+	ISOURL[4]="http://isoredirect.centos.org/centos/7/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso"
+	ISOURL[5]="http://mirror.vtti.vt.edu/centos/7.2.1511/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso"
+    ISOSIZE=4329570304
+    ISOSHA256=907e5755f824c5848b9c8efbb484f3cd945e93faa024bad6ba875226f9683b16
+    ISO_HEAD_20MB_MD5=da700b7b197c1e3a382263c5680a4776
+    # Mount point relative to the FTP root, used in some URLs
+    ISOMOUNTDIRREL="centos-7.2/dvd"
+    ISOMOUNTDIR="${FTPDIR}/${ISOMOUNTDIRREL}"
+    ISOMOUNTVERIFY="CentOS_BuildTag"
+    ISOTAIL=centos72
+    ISOMINPKGS=1
+    YUMDISTRO_NAME="CentOS-7.2 x86_64"
+    # Caution, the 'short name' is used for path elements.  NO SPACES!
+    YUMSHORT_NAME="centos-7.2_x64"
+    YUMGPGPATH="file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7"
+    ;;
+ 99) # Unknown / unsupported
+    ;&  # This makes us fall through to the next match, whether good or not.
+  *)
+    echo "I have no idea what media to use since you aren't using a supported OS."
+    echo "You are on your own here, buddy."
+    sleep 10m
+    exit 1
+    ;;
+esac
+
+### Lumping this into sanityCheck2() because it's not worth its own function
+# Update list of environment variables
+cat  >>${PITD}/phase1.vars <<EOF
+#################
+# Added in phase2
+LONGHUMANNAME="${LONGHUMANNAME}"
+# Relative to the FTP path
+ISOMOUNTDIRREL="${ISOMOUNTDIRREL}"
+ISOMOUNTDIR="${ISOMOUNTDIR}"
+# distro_name and short_name are used in yum repository files
+YUMDISTRO_NAME="${YUMDISTRO_NAME}"
+YUMSHORT_NAME="${YUMSHORT_NAME}"
+YUMGPGPATH="${YUMGPGPATH}"
+EOF
+}
+
+################
+
+
+
+optimizeISODownload(){
+# Perform quick reachability test on URLs.  We'll examine results later.
+URLMAX=${#ISOURL[@]}
+ISODOWNLOAD=0
+mkdir "${PITD}/URLSPEED/"
+{
+  # The "-m 2" sets the overall operation timeout in seconds.  This run is basically
+  # just priming DNS and any proxy server we're using.  Sadly a DNS timeout is going
+  # to take 15 seconds no matter what we set here, so need to run the per-URL checks
+  # backgrounded (and in parallel) to avoid an unacceptable delay.
+  for (( N=0; N < ${URLMAX}; N++ )); do
+    {
+      curl ${ISOURL[${N}]} -o /dev/null -ks -m 2 -w '%{speed_download},%{http_code}' > "${PITD}/URLSPEED/${N}"
+      # If the response from that was all-zeroes (in other words, unreachable) and
+      # if there is a defined alternate for this URL, try that.  Since we can't make
+      # variable changes in our parent process we drop the alternate URL in a text file
+      # to act as a flag.
+      grep -q ",000" "${PITD}/URLSPEED/${N}" && [ ! -z "${ISOURLalt[${N}]}" ] && touch "${PITD}/URLSPEED/${N}.alturl" && curl ${ISOURLalt[${N}]} -o /dev/null -ks -m 2 -w '%{speed_download},%{http_code}' > "${PITD}/URLSPEED/${N}"
+    } &
+  done
+  wait # Let those processes run to completion before we continue...
+} & # ...but wrap all of /those/ in yet another background process that we'll wait for later.
+URLCHECKPID=$!
+}
+
+doISOTailStuff(){
+# Now I plan to have the cached tail-end of the ISO be exactly
+# 100MB (104,857,600 bytes) every time, but honestly I should be careful
+# and have the script read the file's size.  This also lets me easily
+# notice if the tail is *missing* and then skip the code sections that
+# attempt to use it.
+ISO_TAIL_SIZE=0
+[ -f ${PITD}/iso_tail/${ISOTAIL} ] && ISO_TAIL_SIZE=`du -b ${PITD}/iso_tail/${ISOTAIL} | cut -f 1`
+# How to grab the last 100MB of a disc/ISO:   Set ISOSIZE and CDDEVICE first
+# dd if=${CDDEVICE} bs=2048 count=51200 skip=$(( ( ${ISOSIZE} - 104857600 ) / 2048 )) of=/tmp/last_100mb_of_disc
+###
+
+[ $(( ${ISOSIZE} % 2048 )) -ne 0 ] && echo "CAUTION: The script-specified size for the install ISO is not a multiple of 2048" | tee -a "${LOG}" && echo "         bytes.  This is likely a mistake!  Pausing for 10 minutes." | tee -a "${LOG}" && sleep 10m
+}
+
+### These are used by all these ISO related functions... Made my brain hurt...
+# True must be zero for shell conditionals to work.  I set these to make the code read better.
+# "return 1" may confuse someone, "return $FALSE" is clear.
+TRUE=0
+FALSE=1
+
+
+ISOCheckSHA256 () {
+  # Simple read-only check, does the file/device argument I was given have the right SHA256 checksum?
+  sha256sum -b ${1} | grep -q "${ISOSHA256} *" && return $TRUE
+  return $FALSE
+}
+
+ISOCheckHead () {
+  # Arg1 is the full path to an ISO/device we'll be checking.
+  # Compute MD5 of the first 20MB (2KB sectors for optical media) and compare
+  # to our known-good value.  Avoiding use of units in the command since I
+  # don't trust them to be consistent (1,000 vs 1,024).
+  dd if=${1} bs=2048 count=10240 2>/dev/null | md5sum -b | grep -q "${ISO_HEAD_20MB_MD5}" && return $TRUE
+  return $FALSE
+}
+
+ISOTailFix () {
+  # Arg1 is the full path to an ISO we'll be checking/correcting/hashing.
+  # We return $TRUE if the file is fully correct at the end, False otherwise.
+  [ ! -f ${1} ] && echo "ERROR: ISOTailFix() was given a non-regular-file argument:" | tee -a "${LOG}" && echo "       ${1}" | tee -a "${LOG}" && return $FALSE
+  if [ ! -w ${1} ]; then
+    # Before we reject this, does it happen to be correct?
+    ISOCheckSHA256 ${1} && return $TRUE
+    echo "WARNING: ISOTailFix() was given a non-writable argument with the wrong checksum:" | tee -a "${LOG}"
+	echo "         ${1}" | tee -a "${LOG}"
+	return $FALSE
+  fi
+  local ____ISOSIZEONDISK=`du -b ${1} | cut -f 1`
+  # We can't fix something if we have no Tail file
+  if [ ${ISO_TAIL_SIZE} -gt 0 ]; then
+    # If what we got is within 100MB of the proper size, we can try to fix it.
+    if [ ${____ISOSIZEONDISK} -gt $(( ${ISOSIZE} - ${ISO_TAIL_SIZE} - 1 )) ]; then
+      # 100MB == 104,857,600 == 51,200 blocks of 2,048 bytes
+	  # What we are going to do is take our 100MB pre-saved ISO 'tail' and use
+	  # it to overwrite/append the end of the ISO we just read.
+	  dd if=${PITD}/iso_tail/${ISOTAIL} bs=1 count=${ISO_TAIL_SIZE} seek=$(( ${ISOSIZE} - ${ISO_TAIL_SIZE} )) of=${1} &>>"${LOG}"
+	  # And let's chop off any excess (the 'dd' above will not do this for us)
+	  truncate -s ${ISOSIZE} ${1}
+    fi
+  fi
+  ISOCheckSHA256 ${1} && return $TRUE
+  return $FALSE
+}
+
+sanityCheck3(){
+# Let us not tamper with the ISO until we are sure it is not mounted
+umount ${ISOMOUNTDIR} &>>"${LOG}"
+umount ${FTPDIR}/${ISO} &>>"${LOG}"
+echo "${ISOSHA256} *${ISO}" > ${FTPDIR}/${ISO}.sha256
+# Remove any lines which reference the ISO in /etc/fstab
+sed --in-place "/${ISO}/d" /etc/fstab &>/dev/null
+HAVEMEDIA=no
+}
+
+
+doWeirdISOStuff1(){
+# Set up a list of ISOs that we want to consider, in order of preference.
+# We will end up using the first one that is (or can be made) correct.
+# Do note that this is DESTRUCTIVE testing: If a file is not correct we will
+# try to modify it, and ultimately it will be deleted if it fails testing.
+# Always check the final desired path first, even if it does not exist.
+echo -n "Checking for valid ${SHORTHUMANNAME} ISO in the filesystem..." | tee -a "${LOG}"
+echo "${FTPDIR}/${ISO}" > ${PITD}/isos_to_check
+find / -type f -iname "*.iso" -size ${ISOSIZE}c -print 2>/dev/null | grep -v -f ${PITD}/isos_to_check > ${PITD}/isos_to_check.rightsize 
+cat ${PITD}/isos_to_check.rightsize >> ${PITD}/isos_to_check
+# This gets everything that is not more than $ISO_TAIL_SIZE (100mb) too small.
+# Note this includes files that are larger than the ISO is supposed to be.
+find / -type f -iname "*.iso" -size +$(( ${ISOSIZE} - ${ISO_TAIL_SIZE} ))c -print 2>/dev/null | grep -v -f ${PITD}/isos_to_check > ${PITD}/isos_to_check.wrongsize 
+cat ${PITD}/isos_to_check.wrongsize >> ${PITD}/isos_to_check
+
+# "Wait, what are you reading?"  File is specified at the END of the loop.
+# This avoids interesting gotchas in how bash handles environment variables.
+# http://fog.ccsf.edu/~gboyd/cs160b/online/7-loops2/whileread.html
+while read CANDIDATE; do
+  echo ""
+  echo -n "."
+  # The file does still exist, right?  Hey it never hurts to check.
+  [ -f ${CANDIDATE} ] || continue
+  # If the file's head is incorrect just skip it and move on.
+  # This should protect any incorrect ISOs that happen to be approximately the size we want.
+  echo -n ".."
+  ISOCheckHead ${CANDIDATE} || continue
+  HAVEMEDIA=no
+  # Is it correct?
+  echo -n "..."
+  ISOCheckSHA256 ${CANDIDATE} && HAVEMEDIA=yes
+  # Is it fixable?
+  [ "no" == "${HAVEMEDIA}" ] && echo -n "...." && ISOTailFix ${CANDIDATE} && HAVEMEDIA=yes
+  # If no, free up disk space
+  [ "no" == "${HAVEMEDIA}" ] && rm -f ${CANDIDATE} && echo -n "  :("
+  # If the file is correct, put it in the final location
+  [ "yes" == "${HAVEMEDIA}" ] && [ "${CANDIDATE}" != "${FTPDIR}/${ISO}" ] && mv ${CANDIDATE} ${FTPDIR}/${ISO}
+  [ "yes" == "${HAVEMEDIA}" ] && echo "" && break
+done < ${PITD}/isos_to_check
+
+# Check results of earlier URL reachability test.
+# First of all, ensure those tests are done (max time 15 seconds)
+wait ${URLCHECKPID}
+# Anything that returns non-zero is reachable
+for (( N=0; N < ${URLMAX}; N++ )); do
+  # If the test report does not start with "0.0", it was reachable.
+  # That's all we care about right now.
+  grep -q "^0.0" "${PITD}/URLSPEED/${N}" || ISODOWNLOAD=1
+  # Was this using an alternate URL?  If so, switch out the primary URL variable.
+  [ -f "${PITD}/URLSPEED/${N}.alturl" ] && ISOURL[${N}]="${ISOURLalt[${N}]}"
+done
+
+HAVEMEDIA=no
+[ -f ${FTPDIR}/${ISO} ] && HAVEMEDIA=yes
+
+if [ "no" == "${HAVEMEDIA}" ]; then
+  echo ""
+  echo "Failed to find a valid ISO already on this system." | tee -a "${LOG}"
+  echo ""
+  if [ ${ISODOWNLOAD} -eq 0 ]; then
+    echo "Unable to reach any of the download URLs for the ISO." | tee -a "${LOG}"
+  fi
+  # Must be prepared for string-comparison here
+  while [ "${ISODOWNLOAD}" == "1" ]; do
+    echo "At least one URL for the ISO appears to be reachable.  Would you like me to" | tee -a "${LOG}"
+    echo "acquire the file from a network source?   If you say No here then you will have" | tee -a "${LOG}"
+	echo "to provide a disc/ISO locally.  Please enter only Y or N." | tee -a "${LOG}"
+    read -n 1 ISODOWNLOAD
+    case ${ISODOWNLOAD} in
+      Y)
+        ;&
+      y)
+        ISODOWNLOAD=y
+        echo "User answered Y." >> "${LOG}"
+        ;;
+      N)
+        ;&
+      n)
+        ISODOWNLOAD=0
+        echo "User answered N." >> "${LOG}"
+        ;;
+      *)
+        ISODOWNLOAD=1  # Reset the loop
+        echo "Invalid selection."  | tee -a "${LOG}"
+        echo
+    esac
+  done
+fi
+}
+
+doWeirdISOStuff2(){
+# At this point ISODOWNLOAD is one of three values.
+# 0  No URLs were reachable or user declined download
+# 1  At least one URL was reachable but it was not needed, we have an ISO already
+# y  We need an ISO, at least one URL was reachable, and user wants us to try it
+
+if [ "${ISODOWNLOAD}" == "y" ]; then
+  echo | tee -a "${LOG}"
+  echo "Determining fastest mirror..." | tee -a "${LOG}"
+  URLFASTEST=0
+  for (( N=0; N < ${URLMAX}; N++ )); do
+    # If the prior result was zero then we couldn't reach it, and won't try now.
+    grep -q ",000"  ${PITD}/URLSPEED/${N} || curl ${ISOURL[${N}]} -o /dev/null -ks -m 5 -w "%{speed_download},${N},%{http_code}\n" >> "${PITD}/URLSPEED/realtest"
+  done
+  sort -rn "${PITD}/URLSPEED/realtest" > "${PITD}/URLSPEED/sorted"
+  # Now the file has the fastest responses first
+  SPEEDCOUNT=0
+  while read SPEEDLINE; do
+    URLSBYSPEED[${SPEEDCOUNT}]=`echo "${SPEEDLINE}" | cut -d "," -f 2`
+    let SPEEDCOUNT++
+  done < "${PITD}/URLSPEED/sorted"
+
+  echo "Starting with ${URLSBYSPEED[0]}, ${ISOURL[${URLSBYSPEED[0]}]}" >> "${LOG}"
+  URLUSING=0
+  echo "Number of elements in URLSBYSPEED = ${#URLSBYSPEED[@]}" >> "${LOG}"
+  for (( N=0; N<${#URLSBYSPEED[@]}; N++ )); do
+    echo "URLSBYSPEED[${N}]=${URLSBYSPEED[${N}]}" >> "${LOG}"
+  done
+  while [ ${URLUSING} -lt ${#URLSBYSPEED[@]} ] && [ "no" == "${HAVEMEDIA}" ]; do
+    echo "`date`  URLUSING=${URLUSING}   URLSBYSPEED[${URLUSING}]=${URLSBYSPEED[${URLUSING}]}   ISOURL[${URLSBYSPEED[${URLUSING}]}]=${ISOURL[${URLSBYSPEED[${URLUSING}]}]}" >> "${LOG}"
+    echo "Downloading from `echo "${ISOURL[${URLSBYSPEED[${URLUSING}]}]}" | cut -d "/" -f 3`" | tee -a "${LOG}"
+    curl ${ISOURL[${URLSBYSPEED[${URLUSING}]}]} -o ${FTPDIR}/${ISO} -k | tee -a "${LOG}"
+    echo
+    echo "Verifying checksum and (if needed) tweaking..." | tee -a "${LOG}"
+    ISOTailFix ${FTPDIR}/${ISO} && HAVEMEDIA=yes
+    if [ "no" == "${HAVEMEDIA}" ]; then
+      echo -n "File is corrupt or invalid.  "
+      let URLUSING++
+      if [ ${URLUSING} -lt ${#URLSBYSPEED[@]} ]; then
+        # We have more URLs to try
+        echo "Trying next-fastest source."
+        echo
+        echo
+      else
+        # Out of URLs, give up
+        echo "Out of URLs to try."
+        echo
+      fi
+    fi
+  done
+fi
+}
+
+doHaveMediaStuff(){
+if [ "no" == "${HAVEMEDIA}" ]; then
+  echo ""
+  echo "Insert/connect/attach the ${LONGHUMANNAME} disc/ISO now."
+  echo "I will only be checking the first optical device on the system.  You don't"
+  echo "need to press any keys."
+else
+  echo "Found a valid ISO, so there is no need for you to provide an ISO/disc." | tee -a "${LOG}"
+  echo | tee -a "${LOG}"
+fi
+
+while [ "no" == "$HAVEMEDIA" ]; do
+  sleep 2
+  mount ${CDDEVICE} ${MPOINT} &>/dev/null || continue
+  # That was really just a way to see if we had a valid disc present.
+  umount ${MPOINT} &>/dev/null
+  ISOCheckHead ${CDDEVICE} && HAVEMEDIA=maybe
+  [ "no" == "${HAVEMEDIA}" ] && echo "A disc was detected but it is the wrong one.  Try again please."  | tee -a "${LOG}" && eject ${CDDEVICE} &>/dev/null && sleep 5
+done
+
+if  [ "maybe" == "${HAVEMEDIA}" ]; then
+  echo "Contents appear to be correct, copying to local storage." | tee -a "${LOG}"
+  # 'cp' should work fine, but I'm not positive that it matches the block size
+  # automatically.  Using 'dd' A) ensures we copy as efficiently as possible
+  # and B) sets an upper limit on how much we copy if the disk/ISO is corrupt.
+  dd if=${CDDEVICE} bs=2048 count=$(( ${ISOSIZE} / 2048 )) of=${FTPDIR}/${ISO} &>>"${LOG}"
+  eject ${CDDEVICE} &>>"${LOG}"
+  echo "Verifying checksum and (if needed) tweaking..." | tee -a "${LOG}"
+  ISOTailFix ${FTPDIR}/${ISO} && HAVEMEDIA=yes
+fi
+
+# Remove the tail file from local disk, so we can (later) make a well-compressed log bundle
+rm ${PITD}/iso_tail/ -rf &>/dev/null
+
+if [ "yes" == "${HAVEMEDIA}" ]; then
+  echo "Copy complete." | tee -a "${LOG}"
+else
+  echo "WARNING: The ISO failed to copy properly and completely, or is corrupt on the" | tee -a "${LOG}"
+  echo "         source disc.  The (apparently corrupt) file is being deleted." | tee -a "${LOG}"
+  rm -f ${FTPDIR}/${ISO} &>/dev/null
+  echo "ERROR: Without the installation ISO we can't load the needed packages to continue."
+  echo "       You will need to start the post-install from scratch."
+  exit 1
+fi
+}
+
+mountISOStuff(){
+# Set fstab to mount it on boot.
+echo "${FTPDIR}/${ISO}  ${ISOMOUNTDIR}  auto  ro,loop,context=system_u:object_r:public_content_t:s0  1 0" >> /etc/fstab
+rm -rf ${ISOMOUNTDIR} &>/dev/null
+mkdir -p ${ISOMOUNTDIR} &>/dev/null
+restorecon -R ${ISOMOUNTDIR} ${FTPDIR}/${ISO}*
+mount ${ISOMOUNTDIR}  | tee -a "${LOG}"
+
+if [ ! -f "${ISOMOUNTDIR}/${ISOMOUNTVERIFY}" ]; then
+  echo "ERROR: The ISO did not mount properly or something else has gone very wrong." | tee -a "${LOG}"
+  echo "       Aborting."  | tee -a "${LOG}"
+  mount &>>"${LOG}"
+  exit 1
+fi
+}
+
+# These values used to be set just by some grep, cut, and sed work.  Red Hat no longer
+# has such a verbose name in the file, and I don't see the point in trying to
+# automate this to handle later versions.
+##export repo_file=`find ${ISOMOUNTDIR} -type f -name "media.repo"|head -n1`
+##export distro_name=`grep name= $repo_file | cut -d= -f2`
+##export short_name=`echo $distro_name|sed -e 's/Red Hat Enterprise Linux /rhel/'`
+#distro_name="RHEL-7.0 Server.x86_64"
+#short_name="rhel-7.0_x64"
+# We need these later, in phase3
+
+
+doRepoStuff1(){
+case ${DETECTEDOS} in
+  10) # CentOS v7.0
+    # Unlike RHEL, CentOS has default repository files.  We don't want them
+    # because 1) we want to control the packages directly and 2) they cause
+    # errors if they are unreachable.
+    for REPO in Base CR Debuginfo fasttrack Media Sources Vault; do
+     mv /etc/yum.repos.d/CentOS-${REPO}.repo /root &>/dev/null
+    done
+    ;;
+  12) # CentOS v7.2
+    # Unlike RHEL, CentOS has default repository files.  We don't want them
+    # because 1) we want to control the packages directly and 2) they cause
+    # errors if they are unreachable.
+    for REPO in Base CR Debuginfo fasttrack Media Sources Vault; do
+      mv /etc/yum.repos.d/CentOS-${REPO}.repo /root &>/dev/null
+    done
+    ;;
+  99) # Unknown / unsupported
+    ;&  # This makes us fall through to the next match, whether good or not.
+  *)
+  ;;
+esac
+
+if [ ! -f /etc/yum.repos.d/${YUMSHORT_NAME}.repo ]; then
+  cat >/etc/yum.repos.d/${YUMSHORT_NAME}.repo <<EOF
+[InstallMedia]
+name=${YUMDISTRO_NAME}
+baseurl=file://${ISOMOUNTDIR}
+gpgcheck=0
+cost=0
+
+EOF
+  if [ ${DETECTEDOS} -lt 10 ]; then
+    # RHEL system, append the HA/Resilient repos
+  cat >>/etc/yum.repos.d/${YUMSHORT_NAME}.repo <<EOF
+[dvd-HighAvailability]
+name=DVD for ${YUMSHORT_NAME} - HighAvailability
+baseurl=file://${ISOMOUNTDIR}/addons/HighAvailability
+enabled=1
+gpgcheck=0
+
+[dvd-ResilientStorage]
+name=DVD for ${YUMSHORT_NAME} - ResilientStorage
+baseurl=file://${ISOMOUNTDIR}/addons/ResilientStorage
+enabled=1
+gpgcheck=0
+EOF
+  fi
+fi
+
+# Basically just checking to see if 'yum' is running without complaint.
+# Any syntax errors in /etc/yum.repos.d will make the commands fail.
+yum clean all &>>"${LOG}"
+if ! yum list &>"${PITD}/yum_list.txt" ; then
+  echo "ERROR: The 'yum' command did run properly.  Have one of the instructors" | tee -a "${LOG}"
+  echo "       or mentors examine your environment for clues." | tee -a "${LOG}"
+  exit 1
+fi
+
+# With just the basic CentOS 7.0 ISO available we should see 4,405 packages.
+# Including the HighAvailability and ResilientStorage repos brings 4,439.
+# I'm happy to have at least 4,405.
+# These are now being set when we decide which ISO we'll use, because the
+# counts ARE different.
+if [ `cat ${PITD}/yum_list.txt | wc -l` -lt ${ISOMINPKGS} ]; then
+  echo "ERROR: Something seems to be wrong, we aren't seeing enough packages" | tee -a "${LOG}"
+  echo "       when querying 'yum'.  Have one of the instructors or mentors" | tee -a "${LOG}"
+  echo "       examine your environment for clues." | tee -a "${LOG}"
+  exit 1
+fi
+
+echo "DVD mounted and package repositories working, setting up packages now." | tee -a "${LOG}"
+# First ensure we update whatever is already installed...
+if [ ${APPLYUPDATES} -eq 1 ]; then
+  echo "Applying pre-install updates." &>> "${LOG}"
+  yum -y update &>"${PITD}/yum_update.txt"
+else
+  echo "Pre-install updates skipped by argument." | tee -a "${LOG}"
+  sleep 2
+fi
+}
+
+
+############################################################
+# Package Installation
+############################################################
+
+doPackageInstall(){
+
+# And now install what we really need.
+if [ ${INSTALLRPMS} -eq 1 ]; then
+  echo "Package installation in progress..." | tee -a "${LOG}"
+  yum -y install "@Console Internet Tools" "@System Management" "@System Administration Tools" pax dmidecode oddjob sgpio \
+    certmonger pam_krb5 krb5-server krb5-workstation perl-DBD-SQLite httpd vsftpd nfs-utils nfs4-acl-tools dhcp tftp tftp-server \
+    bind-chroot bind-utils  createrepo openldap openldap-servers openldap-devel openldap-clients ypserv migrationtools \
+    selinux-policy-targeted policycoreutils-python syslinux iscsi-initiator-utils ftp lftp samba-client samba* unzip zip lsof \
+    mlocate targetd targetcli tcpdump pykickstart links chrony net-tools patch rng-tools open-vm-tools screen rsync \
+    policycoreutils-devel sos xinetd vim bash-completion &>"${PITD}/yum_install.txt"
+  echo >>"${PITD}/yum_install.txt"
+  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
+  # scsi-target-utils not in the normal RHEL7 repo, it is deprecated.  You can still get it from EPEL though.
+  # It was replaced by LIO, aka targetd & targetcli.
+  #
+  # net-tools is obsolete and deprecated, but contains "ifconfig" and is needed
+  # for either open-vm-tools or VMware Tools to work properly.  According to
+  # https://bugzilla.redhat.com/show_bug.cgi?id=1151644 this should be fixed
+  # (for open-vm-tools) in the next release.
+  echo "...complete." | tee -a "${LOG}"
+else
+  echo "Package installation skipped by argument.  " | tee -a "${LOG}"
+  sleep 5
+fi
+echo ""
+}
+
+doVMToolsStuff(){
+############################################################
+# Open-VM-Tools
+############################################################
+# It is installed above but the service doesn't load until
+# reboot...normally.
+systemctl status vmtoolsd.service &>> "${LOG}"
+systemctl start vmtoolsd.service &>> "${LOG}"
+
+############################################################
+# VMware Tools
+############################################################
+# This used to be one of the first things done, but it requires
+# perl which isn't available on RHEL 7 until after we get our
+# list of packages installed.
+#     ###################
+#     # Does it matter? #    http://kb.vmware.com/kb/2073803
+#     ###################
+# See that KB article, but basically on modern Linux we should
+# expect "open-vm-tools" to take care of us without installing
+# the 'legacy' VMware Tools.  The VMware Tools installer is
+# aware of this and, by default, aborts gracefully rather than
+# get in the way.
+#
+# I am leaving this code block in place and I plan to keep
+# updating the PostInstall-bundled VMware Tools just in case.
+if dmidecode | grep -q "Product Name: VMware Virtual Platform"; then
+  if [ ${INSTALLVMTOOLS} -eq 1 ]; then
+    echo "Decompressing VMware Tools installer package." | tee -a "${LOG}"
+    pushd /tmp &>/dev/null
+    [ -d vmware-tools-distrib ] && rm vmware-tools-distrib -rf &>/dev/null
+    tar -xzf ${FTPDIR}/VMwareTools.tar.gz
+    if [ $? -eq 0 ]; then
+      # Decompressed without errors, good
+      cd vmware-tools-distrib
+      # Set this variable later if VMware Tools are already installed, else leave it junky
+      VMTVER="bogusbogusbogusNOTinstalled"
+      which vmware-toolbox-cmd &>/dev/null && VMTVER=`vmware-toolbox-cmd -v | cut -d " " -f 1`
+      if grep -iRq "${VMTVER}" * &>/dev/null ; then
+        echo "VMware Tools already installed and version matches, leaving as-is." | tee -a "${LOG}"
+      else
+        # Default to 'newer', we will install the Packaged VMware Tools.
+        PVMTIS=newer
+        # What is the Packaged VMware Tools Version?  Hope they don't change this variable  name.
+        PVMTVER=`grep "\\$buildNr =" vmware-install.pl | cut -d "'" -f 2 | cut -d " " -f 1`
+	    # Split these up to Major, Minor, and Revision numbers...
+	    PVMTVERMAJ=`echo "${PVMTVER}" | cut -d "." -f 1`
+	    PVMTVERMIN=`echo "${PVMTVER}" | cut -d "." -f 2`
+	    PVMTVERREV=`echo "${PVMTVER}" | cut -d "." -f 3`
+	    VMTVERMAJ=`echo "${VMTVER}" | cut -d "." -f 1`
+	    VMTVERMIN=`echo "${VMTVER}" | cut -d "." -f 2`
+	    VMTVERREV=`echo "${VMTVER}" | cut -d "." -f 3`
+	    # ...adding zero ensures we have a numeric result even with an alpha input...
+	    let PVMTVERMAJ+=0
+	    let PVMTVERMIN+=0
+	    let PVMTVERREV+=0
+	    let VMTVERMAJ+=0
+	    let VMTVERMIN+=0
+	    let VMTVERREV+=0
+	    # ...and now compare them.
+	    [ ${PVMTVERMAJ} -lt ${VMTVERMAJ} ] && PVMTIS=older
+	    [ ${PVMTVERMIN} -lt ${VMTVERMIN} ] && PVMTIS=older
+	    [ ${PVMTVERREV} -lt ${VMTVERREV} ] && PVMTIS=older
+	    # Sanity check, in case the Package Version seems to be flat-out wrong, just install it.
+	    # This probably indicates that they changed something and our version check is getting trash.
+	    [ 9 -gt ${PVMTVERMAJ} ] && PVMTIS=newer
+	    echo "VMTVER=${VMTVER}" >>"${LOG}"
+	    echo "PVMTVER=${PVMTVER}" >>"${LOG}"
+	    echo "PVMTIS=${PVMTIS}" >>"${LOG}"
+	    if [ "older" == "$PVMTIS" ]; then
+  	    echo "The installed VMware Tools is newer than the package(s) I have access to," | tee -a "${LOG}"
+	      echo "so skipping installation." | tee -a "${LOG}"
+	    else
+          echo "Installing VMware Tools." | tee -a "${LOG}"
+          ./vmware-install.pl --default &>>"${LOG}"
+          # Just in case some background process needs to let go first...
+          sleep 2
+	    fi
+	  fi # Version did not match installed
+    else
+      echo "CAUTION: VMware Tools was needed but failed to decompress properly." | tee -a "${LOG}"
+    fi # Checking that the Tools decompressed OK
+    rm vmware-tools-distrib -rf &>/dev/null
+    popd &>/dev/null
+  else
+    echo "Skipping VMware Tools due to command argument." | tee -a "${LOG}"
+  fi
+else
+  echo "VMware Tools is not needed on this system, skipping." | tee -a "${LOG}"
+fi
+}
+
+############################################################
+
+doDebugHalt(){
+[ -f /DEBUG_HALT1 ] && echo "Halting as ordered, DEBUG_HALT1"  | tee -a "${LOG}" && exit 0
+}
+
+startPhase3(){
+exec ${PITD}/phase3.sh ${PITD}/phase1.vars
+}
+
+##########################################################################
+### Service prep complete 
+### Begin advanced service configuration
+##########################################################################
+
 
 sanityCheck4(){
 # Actually go pick up the variables from phase1 if they are not already set

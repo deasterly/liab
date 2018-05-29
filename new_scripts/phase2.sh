@@ -1,5 +1,6 @@
 #!/bin/bash
 
+sanityCheck1(){
 # Actually go pick up the variables from phase1 if they are not already set
 [ "" == "${PITD}" ] && . ${1}
 # From the first script we have inherited these values (all absolute paths)
@@ -23,7 +24,9 @@ if [ $? -ne 0 ]; then
 fi
 echo "Phase one complete.  The PostInstall ISO has been unmounted." | tee -a "${LOG}"
 echo "=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-" | tee -a "${LOG}"
+}
 
+sanityCheck2(){
 # Manual sanity check for you, Mr. Maintainer:
 # If ISOSIZE is not a multiple of 2048 then something is wrong,
 # and the script may mis-compute some things when attempting
@@ -110,6 +113,7 @@ case ${DETECTEDOS} in
     ;;
 esac
 
+### Lumping this into sanityCheck2() because it's not worth its own function
 # Update list of environment variables
 cat  >>${PITD}/phase1.vars <<EOF
 #################
@@ -123,7 +127,13 @@ YUMDISTRO_NAME="${YUMDISTRO_NAME}"
 YUMSHORT_NAME="${YUMSHORT_NAME}"
 YUMGPGPATH="${YUMGPGPATH}"
 EOF
+}
 
+################
+
+
+
+optimizeISODownload(){
 # Perform quick reachability test on URLs.  We'll examine results later.
 URLMAX=${#ISOURL[@]}
 ISODOWNLOAD=0
@@ -146,7 +156,9 @@ mkdir "${PITD}/URLSPEED/"
   wait # Let those processes run to completion before we continue...
 } & # ...but wrap all of /those/ in yet another background process that we'll wait for later.
 URLCHECKPID=$!
+}
 
+doISOTailStuff(){
 # Now I plan to have the cached tail-end of the ISO be exactly
 # 100MB (104,857,600 bytes) every time, but honestly I should be careful
 # and have the script read the file's size.  This also lets me easily
@@ -159,11 +171,15 @@ ISO_TAIL_SIZE=0
 ###
 
 [ $(( ${ISOSIZE} % 2048 )) -ne 0 ] && echo "CAUTION: The script-specified size for the install ISO is not a multiple of 2048" | tee -a "${LOG}" && echo "         bytes.  This is likely a mistake!  Pausing for 10 minutes." | tee -a "${LOG}" && sleep 10m
+}
 
+### These are used by all these ISO related functions... Made my brain hurt...
 # True must be zero for shell conditionals to work.  I set these to make the code read better.
 # "return 1" may confuse someone, "return $FALSE" is clear.
 TRUE=0
 FALSE=1
+
+
 ISOCheckSHA256 () {
   # Simple read-only check, does the file/device argument I was given have the right SHA256 checksum?
   sha256sum -b ${1} | grep -q "${ISOSHA256} *" && return $TRUE
@@ -207,6 +223,7 @@ ISOTailFix () {
   return $FALSE
 }
 
+sanityCheck3(){
 # Let us not tamper with the ISO until we are sure it is not mounted
 umount ${ISOMOUNTDIR} &>>"${LOG}"
 umount ${FTPDIR}/${ISO} &>>"${LOG}"
@@ -214,8 +231,10 @@ echo "${ISOSHA256} *${ISO}" > ${FTPDIR}/${ISO}.sha256
 # Remove any lines which reference the ISO in /etc/fstab
 sed --in-place "/${ISO}/d" /etc/fstab &>/dev/null
 HAVEMEDIA=no
+}
 
 
+doWeirdISOStuff1(){
 # Set up a list of ISOs that we want to consider, in order of preference.
 # We will end up using the first one that is (or can be made) correct.
 # Do note that this is DESTRUCTIVE testing: If a file is not correct we will
@@ -303,7 +322,9 @@ if [ "no" == "${HAVEMEDIA}" ]; then
     esac
   done
 fi
+}
 
+doWeirdISOStuff2(){
 # At this point ISODOWNLOAD is one of three values.
 # 0  No URLs were reachable or user declined download
 # 1  At least one URL was reachable but it was not needed, we have an ISO already
@@ -354,7 +375,9 @@ if [ "${ISODOWNLOAD}" == "y" ]; then
     fi
   done
 fi
-  
+}
+
+doHaveMediaStuff(){
 if [ "no" == "${HAVEMEDIA}" ]; then
   echo ""
   echo "Insert/connect/attach the ${LONGHUMANNAME} disc/ISO now."
@@ -398,7 +421,9 @@ else
   echo "       You will need to start the post-install from scratch."
   exit 1
 fi
+}
 
+mountISOStuff(){
 # Set fstab to mount it on boot.
 echo "${FTPDIR}/${ISO}  ${ISOMOUNTDIR}  auto  ro,loop,context=system_u:object_r:public_content_t:s0  1 0" >> /etc/fstab
 rm -rf ${ISOMOUNTDIR} &>/dev/null
@@ -412,6 +437,7 @@ if [ ! -f "${ISOMOUNTDIR}/${ISOMOUNTVERIFY}" ]; then
   mount &>>"${LOG}"
   exit 1
 fi
+}
 
 # These values used to be set just by some grep, cut, and sed work.  Red Hat no longer
 # has such a verbose name in the file, and I don't see the point in trying to
@@ -423,6 +449,8 @@ fi
 #short_name="rhel-7.0_x64"
 # We need these later, in phase3
 
+
+doRepoStuff1(){
 case ${DETECTEDOS} in
   10) # CentOS v7.0
     # Unlike RHEL, CentOS has default repository files.  We don't want them
@@ -503,10 +531,15 @@ else
   echo "Pre-install updates skipped by argument." | tee -a "${LOG}"
   sleep 2
 fi
+}
+
 
 ############################################################
 # Package Installation
 ############################################################
+
+doPackageInstall(){
+
 # And now install what we really need.
 if [ ${INSTALLRPMS} -eq 1 ]; then
   echo "Package installation in progress..." | tee -a "${LOG}"
@@ -531,7 +564,9 @@ else
   sleep 5
 fi
 echo ""
+}
 
+doVMToolsStuff(){
 ############################################################
 # Open-VM-Tools
 ############################################################
@@ -621,9 +656,14 @@ if dmidecode | grep -q "Product Name: VMware Virtual Platform"; then
 else
   echo "VMware Tools is not needed on this system, skipping." | tee -a "${LOG}"
 fi
+}
+
 ############################################################
 
+doDebugHalt(){
 [ -f /DEBUG_HALT1 ] && echo "Halting as ordered, DEBUG_HALT1"  | tee -a "${LOG}" && exit 0
+}
 
+startPhase3(){
 exec ${PITD}/phase3.sh ${PITD}/phase1.vars
-
+}

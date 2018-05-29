@@ -20,6 +20,8 @@ echo ""
 echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}"
 echo ""
 }
+showBanner
+
 
 # Daniel_Johnson1@dell.com      Aaron_Southerland@dell.com
 # This script was made to automate the initial setup of the Red Hat In
@@ -49,6 +51,7 @@ am_I_sourced () {
   fi
 }
 
+check4Source(){
 # Lazyness - If we are being sourced, I need to remove all the 'exit's and substitute
 # something that won't log you out.  But I'd rather not spend time on that right now, so...
 if am_I_sourced ; then
@@ -56,6 +59,7 @@ if am_I_sourced ; then
   # See, can't use 'exit' here
   return 0
 fi
+}
 
 mustBeRoot(){
 [ 0 -ne $UID ] && echo "ERROR: This MUST be run as root!  Try again." && exit 1
@@ -84,6 +88,8 @@ checkForISO9660(){
 [ ! -f ${MPOINT}/.fsflag.Aa-Bb-Cc_Dd_Ee_Ff.1.2.3.4.5.6.7.9.10.11.12.13.14.15.16.17.18.19.20.21.22.23.24.25.txt ] && echo "ERROR: ISO mounted with the WRONG filesystem, names are corrupt." && echo "       Re-mount without specifying a filesystem type." && exit 1
 }
 
+
+getConfigOptions(){
 ### ### ###
 ### Need to examine these as the basis for a "y/n" menu driven deployment script...
 
@@ -161,7 +167,7 @@ for i in "$@"; do
 	  ;;
   esac
 done
-
+}
 ### ### ### 
 
 detectCentOS(){
@@ -276,11 +282,12 @@ NIC2CON=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 3`
 NIC2CONUUID=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 4`
 }
 
+
+doWeirdNICVoodoo(){
 ### This seems arbitrarily convoluted to me, perhaps due to 
 ### the original design's reliance on VMWare, so this might
 ### be simplified...
 
-doWeirdNICVoodoo(){
 # I find it interesting that the network setup steps don't take a
 # predictable amount of time to run.  It seems to vary considerably.
 
@@ -366,7 +373,7 @@ ethtool ${NIC2NAME} &>>"${PITD}/ethtool_2.txt"
 /usr/local/sbin/scrape_dhcp_settings.sh phase1_temp &>/dev/null
 }
 
-
+doHostnameStuff(){
 ############################################################
 # Hostname.  Note that the shell prompt won't be updated
 # until reboot or logoff/on.
@@ -376,14 +383,16 @@ ethtool ${NIC2NAME} &>>"${PITD}/ethtool_2.txt"
 echo "172.26.0.1  server1.example.com  server1" >> /etc/hosts
 echo "server1.example.com" > /etc/hostname
 hostname server1
+}
 
-############################################################
+doCentralTime(){
 # Timezone (defaults to Eastern/New York)
 ( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
+}
 
 ############################################################
 
-
+doWeirdStuff2(){
 # That's all we can do without extra packages.  Now we need to transfer
 # control out of the mount-point, unmount the PostInstall ISO, and
 # prompt the user to connect the full CentOS 7.2 ISO
@@ -438,7 +447,9 @@ set &>>"${PITD}/phase1_debug_set"
 
 # Back to root's home directory.
 cd 
+}
 
+startPhase2(){
 # How we call phase2 depends on how we were originally called.
 # Since we were executed from the ISO mount point, the hand-off
 # to phase2.sh must be done in this careful way to allow bash
@@ -449,3 +460,4 @@ if am_I_sourced ; then
 else
   exec ${PITD}/phase2.sh ${PITD}/phase1.vars
 fi
+}
