@@ -22,11 +22,6 @@ echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}"
 echo ""
 }
 
-
-
-
-
-
 mustBeRoot(){
 [ 0 -ne $UID ] && echo "ERROR: This MUST be run as root!  Try again." && exit 1
 }
@@ -68,7 +63,6 @@ NTP3=`grep "option ntp-servers" "${CURLEASE}" | tail -n 1 | cut -d " " -f 5 | cu
 [ "${NTP2}" == "${NTP1}" ] && NTP2=""
 }
 
-
 configureForwarder(){
 rm /etc/named.forwarders.new &>/dev/null
 echo "# Referenced from /etc/named.conf .  These are the external DNS servers" >> /etc/named.forwarders.new
@@ -84,7 +78,6 @@ diff /etc/named.forwarders.new /etc/named.forwarders &>/dev/null && VALIDDNS=0
 [ ${VALIDDNS} -gt 0 ] && chattr -i /etc/named.forwarders && mv /etc/named.forwarders.new /etc/named.forwarders && systemctl restart named.service
 rm /etc/named.forwarders.new &>/dev/null
 }
-
 
 configureResolver(){
 rm /etc/resolv.conf.new &>/dev/null
@@ -122,8 +115,6 @@ diff /etc/resolv.conf.new /etc/resolv.conf &>/dev/null && VALIDRESOLV=0
 rm /etc/resolv.conf.new &>/dev/null
 }
 
-
-
 configureChrony(){
 rm /etc/chrony.conf.new &>/dev/null
 cp /etc/chrony.conf.base /etc/chrony.conf.new &>/dev/null
@@ -140,18 +131,7 @@ logResults(){
 logger "scrape_dhcp_settings: DNS values ${DNS1} ${DNS2} ${DNS3}; NTP values ${NTP1} ${NTP2} ${NTP3}; DNSSEARCH ${DNSSEARCH}"
 }
 
-
-
-
-
-
-
-
-
-ln -s $(ls VMwareTools-*.tar.gz | sort -V | tail -n 1) VMwareTools.tar.gz | tee -a "${LOG}"
-
-
-
+#ln -s $(ls VMwareTools-*.tar.gz | sort -V | tail -n 1) VMwareTools.tar.gz | tee -a "${LOG}"
 
 getNICInfo(){
 nmcli -t -f DEVICE,TYPE,CONNECTION,CON-UUID device | grep "ethernet" > ${PITD}/NICs
@@ -258,15 +238,6 @@ doCentralTime(){
 ( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
 }
 
-
-
-
-
-
-
-
-#startPhase2(){
-
 doPackageInstall(){
 if [ ${INSTALLRPMS} -eq 1 ]; then
   echo "Package installation in progress..." | tee -a "${LOG}"
@@ -277,7 +248,7 @@ if [ ${INSTALLRPMS} -eq 1 ]; then
     mlocate targetd targetcli tcpdump pykickstart links chrony net-tools patch rng-tools open-vm-tools screen rsync \
     policycoreutils-devel sos xinetd vim bash-completion &>"${PITD}/yum_install.txt"
   echo >>"${PITD}/yum_install.txt"
-  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
+#  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
   # scsi-target-utils not in the normal RHEL7 repo, it is deprecated.  You can still get it from EPEL though.
   # It was replaced by LIO, aka targetd & targetcli.
   #
@@ -363,28 +334,18 @@ else
 fi
 }
 
-
 doDebugHalt(){
 [ -f /DEBUG_HALT1 ] && echo "Halting as ordered, DEBUG_HALT1"  | tee -a "${LOG}" && exit 0
 }
-
-startPhase3(){
-exec ${PITD}/phase3.sh ${PITD}/phase1.vars
-}
-
-
-
 
 setKSRelease(){
 cat /etc/kickstart-release >>/etc/issue
 }
 
-
 startRNGD(){
 systemctl enable rngd.service &>>"${LOG}"
 systemctl start rngd.service  &>>"${LOG}"
 }
-
 
 doLabRouteTesting(){
 echo "   Internal lab routes" | tee -a "${LOG}"
@@ -395,7 +356,6 @@ for i in `seq 10 ${NUMOFWS}`; do
   echo "172.26.$i.0/24 via 172.26.0.2$i dev ${NIC2NAME}" >>/etc/sysconfig/network-scripts/route-Internal
 done
 }
-
 
 startWebServer(){
 echo "   httpd / Apache" | tee -a "${LOG}"
@@ -736,7 +696,6 @@ chattr +i /etc/chrony.conf
 systemctl enable chronyd.service &>>"${LOG}"
 systemctl start  chronyd.service &>>"${LOG}"
 }
-
 
 configureLabUsers(){
 echo "   Lab Users" | tee -a "${LOG}"
@@ -1079,7 +1038,6 @@ else #DOKERBEROSCONFIG
 fi #End of DOKERBEROSCONFIG main block
 }
 
-
 configureNFSServer(){
  echo "   NFS" | tee -a "${LOG}"
 mkdir /home/server1 &>>"${LOG}"
@@ -1222,8 +1180,7 @@ done
   for i in {student,user1,user2,user3,user4,user5}; do chown -R $i: /home/$i/files;done
 }
 
-
-echo "   Miscellaneous" | tee -a "${LOG}"
+# echo "   Miscellaneous" | tee -a "${LOG}"
 
 updateManDB(){
 mandb &>>"${LOG}"
@@ -1383,9 +1340,6 @@ firewall-cmd --list-all-zones &>>"${PITD}/firewall-cmd_list-all-zones"
 echo "Firewall rules done" &>>"${LOG}"
 }
 
-
-
-
 grabMiscGoodies(){
 pushd ${FTPDIR}/materials &>/dev/null
 unzip -o ../extras.zip &>>"${LOG}"
@@ -1544,7 +1498,6 @@ fi
 rm "${SDS}" &>/dev/null
 /usr/local/sbin/scrape_dhcp_settings.sh &>>"${LOG}"
 }
-
 
 /etc/cron.daily/mlocate &>>"${LOG}"
 
