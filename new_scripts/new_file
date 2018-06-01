@@ -12,6 +12,10 @@ KICKSTARTRELEASE="LIAB server v$LIABVERSION"
 
 FTPDIR=/var/ftp/pub
 
+PITD=`mktemp -d`
+LOG="${PITD}/postinstall.log"
+( echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}" ) >> "${LOG}"
+
 showBanner(){
 echo ""
 echo "${BL1}"; echo "${BL2}"; echo "${BL3}"; echo "${BL4}"
@@ -1596,45 +1600,45 @@ reboot
 
 showBanner
 mustBeRoot
-getExternalDHCPInfo
-getDNSServerInfo
-getNTPServerInfo
-configureForwarder
-configureResolver
-configureChrony
 getNICInfo
 getNICOrder
 doWeirdNICVoodoo
 doHostnameStuff
-doCentralTime
-doPackageInstall
-doVMToolsStuff
-doDebugHalt
-setKSRelease
-startRNGD
-doLabRouteTesting
-startFTPServer
-configureDHCPServer
-configureDNSServer
-configurePXEServer
-configureNTPServer
-configureLabUsers
-configureCerts
-configureLDAPServer
-configureKRB5
-configureNFSServer
-configureSMBServer
-configureISCSIServer
-createLocalUsers
-updateManDB
-doFinalRPMStuff
-doSSHStuff
-doFinalWeirdStuff1
-evasiveAction
-configureFirewallStuff
-grabMiscGoodies
-magicalEasterEggs
-doASCIIArt
-scrapeDNSForwarder
-logALittleNote
-attaBoy
+getExternalDHCPInfo
+getDNSServerInfo
+getNTPServerInfo
+#configureForwarder
+#configureResolver
+#configureChrony
+#doCentralTime
+#doPackageInstall
+#doVMToolsStuff
+#doDebugHalt
+#setKSRelease
+#startRNGD
+#doLabRouteTesting
+#startFTPServer
+#configureDHCPServer
+#configureDNSServer
+#configurePXEServer
+#configureNTPServer
+#configureLabUsers
+#configureCerts
+#configureLDAPServer
+#configureKRB5
+#configureNFSServer
+#configureSMBServer
+#configureISCSIServer
+#createLocalUsers
+#updateManDB
+#doFinalRPMStuff
+#doSSHStuff
+#doFinalWeirdStuff1
+#evasiveAction
+#configureFirewallStuff
+#grabMiscGoodies
+#magicalEasterEggs
+#doASCIIArt
+#scrapeDNSForwarder
+#logALittleNote
+#attaBoy
