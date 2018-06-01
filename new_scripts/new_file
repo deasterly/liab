@@ -1499,7 +1499,7 @@ rm "${SDS}" &>/dev/null
 /usr/local/sbin/scrape_dhcp_settings.sh &>>"${LOG}"
 }
 
-/etc/cron.daily/mlocate &>>"${LOG}"
+#/etc/cron.daily/mlocate &>>"${LOG}"
 
 logALittleNote(){
 `echo "bG9nZ2VyIElcJ20gbWFraW5nIGEgbm90ZSBoZXJlOiBIVUdFIFNVQ0NFU1MK" | base64 -d`
