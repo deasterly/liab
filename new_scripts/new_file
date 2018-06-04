@@ -238,8 +238,9 @@ doCentralTime(){
 ( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
 }
 
-# *** commented out this section, we can do this in the packages section in the kickstart
+
 #doPackageInstall(){
+# *** commented out this section, we can do this in the packages section in the kickstart
 #if [ ${INSTALLRPMS} -eq 1 ]; then
 #  echo "Package installation in progress..." | tee -a "${LOG}"
 # yum -y install "@Console Internet Tools" "@System Management" "@System Administration Tools" pax dmidecode oddjob sgpio \
@@ -1557,11 +1558,11 @@ showBanner
 mustBeRoot
 getNICInfo
 getNICOrder
-doWeirdNICVoodoo
-doHostnameStuff
-getExternalDHCPInfo
-getDNSServerInfo
-getNTPServerInfo
+#doWeirdNICVoodoo
+#doHostnameStuff
+#getExternalDHCPInfo
+#getDNSServerInfo
+#getNTPServerInfo
 #configureForwarder
 #configureResolver
 #configureChrony
