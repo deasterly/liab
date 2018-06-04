@@ -238,31 +238,33 @@ doCentralTime(){
 ( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
 }
 
-doPackageInstall(){
-if [ ${INSTALLRPMS} -eq 1 ]; then
-  echo "Package installation in progress..." | tee -a "${LOG}"
-  yum -y install "@Console Internet Tools" "@System Management" "@System Administration Tools" pax dmidecode oddjob sgpio \
-    certmonger pam_krb5 krb5-server krb5-workstation perl-DBD-SQLite httpd vsftpd nfs-utils nfs4-acl-tools dhcp tftp tftp-server \
-    bind-chroot bind-utils  createrepo openldap openldap-servers openldap-devel openldap-clients ypserv migrationtools \
-    selinux-policy-targeted policycoreutils-python syslinux iscsi-initiator-utils ftp lftp samba-client samba* unzip zip lsof \
-    mlocate targetd targetcli tcpdump pykickstart links chrony net-tools patch rng-tools open-vm-tools screen rsync \
-    policycoreutils-devel sos xinetd vim bash-completion &>"${PITD}/yum_install.txt"
-  echo >>"${PITD}/yum_install.txt"
-#  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
-  # scsi-target-utils not in the normal RHEL7 repo, it is deprecated.  You can still get it from EPEL though.
-  # It was replaced by LIO, aka targetd & targetcli.
-  #
-  # net-tools is obsolete and deprecated, but contains "ifconfig" and is needed
-  # for either open-vm-tools or VMware Tools to work properly.  According to
-  # https://bugzilla.redhat.com/show_bug.cgi?id=1151644 this should be fixed
-  # (for open-vm-tools) in the next release.
-  echo "...complete." | tee -a "${LOG}"
-else
-  echo "Package installation skipped by argument.  " | tee -a "${LOG}"
-  sleep 5
-fi
-echo ""
-}
+commented out this section, we can do this in the packages section in the kickstart
+#doPackageInstall(){
+#if [ ${INSTALLRPMS} -eq 1 ]; then
+#  echo "Package installation in progress..." | tee -a "${LOG}"
+# yum -y install "@Console Internet Tools" "@System Management" "@System Administration Tools" pax dmidecode oddjob sgpio \
+#    certmonger pam_krb5 krb5-server krb5-workstation perl-DBD-SQLite httpd vsftpd nfs-utils nfs4-acl-tools dhcp tftp tftp-server \
+#    bind-chroot bind-utils  createrepo openldap openldap-servers openldap-devel openldap-clients ypserv migrationtools \
+#    selinux-policy-targeted policycoreutils-python syslinux iscsi-initiator-utils ftp lftp samba-client samba* unzip zip lsof \
+#    mlocate targetd targetcli tcpdump pykickstart links chrony net-tools patch rng-tools open-vm-tools screen rsync \
+#    policycoreutils-devel sos xinetd vim bash-completion &>"${PITD}/yum_install.txt"
+#  echo >>"${PITD}/yum_install.txt"
+# *** still need to find out what we need to install from this section
+##  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
+  ## scsi-target-utils not in the normal RHEL7 repo, it is deprecated.  You can still get it from EPEL though.
+  ## It was replaced by LIO, aka targetd & targetcli.
+  ##
+  ## net-tools is obsolete and deprecated, but contains "ifconfig" and is needed
+  ## for either open-vm-tools or VMware Tools to work properly.  According to
+  ## https://bugzilla.redhat.com/show_bug.cgi?id=1151644 this should be fixed
+  ## (for open-vm-tools) in the next release.
+#  echo "...complete." | tee -a "${LOG}"
+#else
+#  echo "Package installation skipped by argument.  " | tee -a "${LOG}"
+#  sleep 5
+#fi
+#echo ""
+#}
 
 doVMToolsStuff(){
 systemctl status vmtoolsd.service &>> "${LOG}"
