@@ -247,7 +247,7 @@ doCentralTime(){
 #    bind-chroot bind-utils  createrepo openldap openldap-servers openldap-devel openldap-clients ypserv migrationtools \
 #    selinux-policy-targeted policycoreutils-python syslinux iscsi-initiator-utils ftp lftp samba-client samba* unzip zip lsof \
 #    mlocate targetd targetcli tcpdump pykickstart links chrony net-tools patch rng-tools open-vm-tools screen rsync \
-#    policycoreutils-devel sos xinetd vim bash-completion &>"${PITD}/yum_install.txt"
+#    policycoreutils-devel sos xinetd vim bash-completrooion &>"${PITD}/yum_install.txt"
 #  echo >>"${PITD}/yum_install.txt"
 # *** still need to find out what we need to install from this section
 ##  yum -y install ${FTPDIR}/materials/sl-*.rpm &>>"${PITD}/yum_install.txt"
