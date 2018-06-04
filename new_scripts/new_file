@@ -238,7 +238,7 @@ doCentralTime(){
 ( cd /etc && rm localtime && ln -s ../usr/share/zoneinfo/US/Central )
 }
 
-commented out this section, we can do this in the packages section in the kickstart
+# *** commented out this section, we can do this in the packages section in the kickstart
 #doPackageInstall(){
 #if [ ${INSTALLRPMS} -eq 1 ]; then
 #  echo "Package installation in progress..." | tee -a "${LOG}"
