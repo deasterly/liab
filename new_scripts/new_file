@@ -160,7 +160,6 @@ NIC2CONUUID=`head -n 2 < ${PITD}/NICs | tail -n 1 | cut -d ":" -f 4`
 
 doWeirdNICVoodoo(){
 
-
 if [ "${NIC1CON}" != "External" ]; then
   echo "nmcli device disconnect ${NIC1NAME}" &>>"${LOG}"
   nmcli device disconnect ${NIC1NAME} &>>"${LOG}"
@@ -266,6 +265,7 @@ doCentralTime(){
 #fi
 #echo ""
 #}
+# need to install sl as part of a later step after either grabbing the rpm or setting up epel
 
 doVMToolsStuff(){
 systemctl status vmtoolsd.service &>> "${LOG}"
