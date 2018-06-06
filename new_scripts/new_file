@@ -1344,9 +1344,12 @@ echo "Firewall rules done" &>>"${LOG}"
 }
 
 grabMiscGoodies(){
-pushd ${FTPDIR}/materials &>/dev/null
+wget https://github.com/deasterly/liab/blob/aksoutherland/ftppub/extras.zip
+mkdir ${FTPDIR}/materials
+cp extras.zip ${FTPDIR}/materials
+#pushd ${FTPDIR}/materials &>/dev/null
 unzip -o ../extras.zip &>>"${LOG}"
-popd &>/dev/null
+#popd &>/dev/null
 
 chown root:root ${FTPDIR}/ -R &>/dev/null
 
